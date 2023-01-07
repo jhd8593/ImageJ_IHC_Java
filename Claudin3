@@ -1,0 +1,506 @@
+/*
+
+InteredgeDistance macro for ImageJ
+By Santosh Patnaik -- https://forum.image.sc/u/alpha2zee/summary
+
+----------------------------------
+
+To measure distance between two user-drawn segmented lines (polylines) on an image. Shortest distances from points along the shorter line to the longer line, after spline interpoltaion, are used to calculate the average distance between the two lines.
+
+Upon running the macro, the user is first asked to select a pre-existing file (can be empty) to write measurements to. The user is then prompted to open the image to examine, and then to draw the two segmented lines. The macro then makes the measurements and prompts the user to save or ignore them.
+
+Number of points randomly selected along the shorter user-drawn line from which shortest distances to the longer user-drawn line are measured are specified by settingUsedPointsMin/Max options (below). Mean, SD, etc. are calculated from these shortest distance measurements.
+
+Output (pixel units) in CSV format is written to a user-specified file with columns: Filename (image filename), FileFolder (parent folder of image file),TimeOfMeasurement (YYYY-MM-DD-HH:MM:SS format), LengthLine1 and LengthLine2 (lengths of the user-drawn segmented lines, before spline interpolation), DistancesMeasured (number of points at which distances were measured), and Mean, SD, Min, and Max of the distances. If the settingFileSavePrefix setting (below) is non-empty, a copy of the analyzed image with overlaid measurements is saved.
+
+Tested with ImageJ 2.1.0/1.53c in Fiji. Set settingDebug to 1 if moidying code/debugging.
+
+*/
+
+settingReleaseDate = '29 Aug 2020';
+settingVersion = '1.1';
+
+//// Options
+
+// Filename prefix (alphanumerical string) to use to save copy of image with overlaid measurements. Leave empty to not save file (''). Saved image will have format of TIF, and rest of the filename, and file location will be same as for original image.
+
+settingFileSavePrefix = '';
+
+// Minimum individual distance measurements (i.e., distance measurements are made at minimum this many points);  3 suggested
+
+settingUsedPointsMin = 3;
+
+// Maximum individual distance measurements
+
+settingUsedPointsMax = 30;
+
+// Help debug by printing to log window; enable/disable by setting to 1/0
+
+settingDebug = 1;
+
+// This macro was tested in ImageJ 1.53c (ImageJ2 2.1.0). Remove or 'comment' the line below to try/test the macro in an older ImageJ.
+
+requires('1.53c');
+
+//// Define some functions
+
+// Add to array
+
+function myAppend(arr, value) {
+  arr2 = newArray(arr.length+1);
+  for(i = 0; i < arr.length; i++){
+    arr2[i] = arr[i];
+  }
+  arr2[arr.length] = value;
+  return arr2;
+}
+
+// Get (acute) angle in degrees between 3 points (specified by X/Y coordinates) at point #2 (p2)
+
+function myDegreeThreePoints(p1x, p2x, p3x, p1y, p2y, p3y){
+  p1p2 = pow(p1x - p2x, 2) + pow(p1y - p2y, 2);
+  p2p3 = pow(p2x - p3x, 2) + pow(p2y - p3y, 2);
+  p1p3 = pow(p1x - p3x, 2) + pow(p1y - p3y, 2);
+  return 180 * acos((p1p2 + p2p3 - p1p3)/(2 * sqrt(p1p2) * sqrt(p2p3)))/PI;
+}
+
+// Randomize array
+
+function myRandomize(array){
+  n = array.length;
+  while(n > 1){
+    k = n * random();
+    n--;
+    temp = array[n];
+    array[n] = array[k];
+    array[k] = temp;
+  }
+  return array;
+}
+
+//// Start log for debugging if needed
+
+if(settingDebug){
+  print('>>>> Starting InteredgeDistance macro ' + settingVersion + ' (' + settingReleaseDate + ')');
+  print('settingUsedPointsMin = ' + settingUsedPointsMin + '; settingUsedPointsMax = ' + settingUsedPointsMax + '; settingFileSavePrefix = ' + settingFileSavePrefix); 
+}
+
+//// Sanity check
+
+settingUsedPointsMin = parseInt(settingUsedPointsMin);
+settingUsedPointsMax = parseInt(settingUsedPointsMax);
+
+if(isNaN(settingUsedPointsMin) || settingUsedPointsMin < 1){
+  settingUsedPointsMin = 1;
+  if(settingDebug){
+    print('Reset settingUsedPointsMin to 1');
+  }
+}
+if(isNaN(settingUsedPointsMax) || settingUsedPointsMax < 1){
+  settingUsedPointsMax = 15;
+  if(settingDebug){
+    print('Reset settingUsedPointsMax to 15');
+  }
+}
+
+//// Prompt user to select pre-existing csv/txt file to write output to
+
+Dialog.create('InteredgeDistance macro' + ', version ' + settingVersion + '; ' + settingReleaseDate);
+Dialog.addMessage('Hit OK to choose txt/csv file to store results')
+Dialog.show();
+outPath = File.openDialog("Choose txt/csv file");
+
+//// Initialize output
+
+isFirstImage = 1;
+measuringImage = 1;
+outTxtHeader = '';
+resultAvailable = 0;
+
+// Check if output needs a header
+
+temp = File.openAsRawString(outPath);
+
+if(lengthOf(temp) > 11){
+  if(matches(substring(temp, 0, 11), 'Filename,Fi')){
+    outTxtHeader = '';
+  }
+}else{
+  outTxtHeader = "Filename,FileFolder,TimeOfMeasurement,LengthLine1,LengthLine2,DistancesMeasured,Mean,SD,Min,Max\n";
+}
+
+if(settingDebug){
+  print('Measurements written to file at ' + outPath);
+}
+
+//// Main job
+
+while(measuringImage == 1){
+
+  // Prompt user to select image for measurement, quit, etc.
+
+  Dialog.createNonBlocking('Next');
+  
+  if(resultAvailable != 0){
+    Dialog.addMessage('Measurements made (px): ' + resultAvailable + "\n\n[Also check image window]");
+    dialogItems = newArray('Save measurements and Quit', 'Save measurements and Measure another image', "Don't save measurements and Measure another image", 'Quit without saving measurements');
+    Dialog.addRadioButtonGroup('Select NEXT action', dialogItems, dialogItems.length, 1, 'Save measurements and Measure another image');
+  }else{
+    dialogItems = newArray('Measure image', 'Quit');
+    Dialog.addRadioButtonGroup('Select action', dialogItems, dialogItems.length, 1, 'Measure image');
+  }
+  
+  Dialog.show();
+  nextStep = Dialog.getRadioButton();
+
+  // Act as per user selection
+
+  if(nextStep == 'Quit'){
+    exit;
+  }
+
+  if(nextStep == 'Quit without saving measurements'){
+    close();
+    exit;
+  }
+
+  if(resultAvailable != 0 && nextStep == 'Save measurements and Quit'){
+    File.append(outTxtHeader + outTxt, outPath);
+    if(settingFileSavePrefix != ''){
+      saveAs('Tiff', imgDir + File.separator + settingFileSavePrefix + imgFile);
+    }
+    close();
+    if(settingDebug){
+      print('Saving measurements for ' + imgPath);
+    }
+    exit;
+  }
+
+  if(resultAvailable != 0 && nextStep == 'Save measurements and Measure another image'){
+    File.append(outTxtHeader + outTxt, outPath);
+    outTxtHeader = '';
+    outTxt = '';
+    if(settingFileSavePrefix != ''){
+      saveAs('Tiff', imgDir + File.separator + settingFileSavePrefix + imgFile);
+    }
+    close();
+    if(settingDebug){
+      print('Saving measurements for ' + imgPath);
+    }
+    measuringImage = 1;
+    resultAvailable = 0;
+    isFirstImage = 0;
+  }
+
+  if(resultAvailable != 0 && nextStep == "Don't save measurements and Measure another image"){
+    if(isFirstImage == 0){
+    outTxtHeader = '';
+  }
+    outTxt = '';
+    close();
+    measuringImage = 1;
+    resultAvailable = 0;
+  }
+
+  if(nextStep == 'Measure image'){
+    measuringImage = 1;
+    resultAvailable = 0;
+  }
+
+  //// Measure image
+
+  imgPath = File.openDialog('Choose image file');
+  open(imgPath);
+  imgFile = File.getName(imgPath);
+  imgDir = File.getParent(imgPath);
+
+  if(settingDebug){
+    print('*** Beginning measurements for ' + imgPath);
+  }
+
+  // Initialize
+
+  measureDone = 0;
+  reAttempt = 0;
+  roiManager('reset');
+  roiManager('Show All');
+
+  // Prompt user to draw the two lines for the two edges. Lines must be poly (segmented; selectionType = 6) not simple/straight (selectionType = 5). The two lines have to be long enough, and overlap enough; otherwise, user has to redraw
+
+  while(measureDone == 0){
+
+    // Initialize
+
+    measures = newArray(0);
+    distX1 = newArray(0);
+    distY1 = newArray(0);
+    distX2 = newArray(0);
+    distY2 = newArray(0);
+
+    roiManager('reset');
+    setTool('polyline');
+
+    if(settingDebug){
+      print('measureDone = ' + measureDone + '; measuringImage = ' + measuringImage + '; reAttempt = ' + reAttempt + '; resultAvailable = ' + resultAvailable);
+    }
+
+    if(reAttempt == 0){
+      waitForUser("FIRST: in image window, draw a segmented line to mark one edge\n\nTHEN: hit OK\n\n \n\nLine must be of segmented type (polyline).\n\n \n\n[Esc key to exit]");
+    }else{
+      waitForUser("Sorry, there was an issue. Please re-draw lines.\n\n \n\nLines must be segmented and sufficiently long and opposing.\n\n \n\nFIRST: in image window, draw a segmented line to mark one edge\n\nTHEN: hit OK\n\n \n\n[Esc key to exit]");
+    }
+
+    // Line 1
+
+    if(selectionType() == 6){
+
+      reAttempt = 1;
+      getSelectionCoordinates(x, y);
+      lengthLine1 = 0;
+      for(i = 1; i < x.length; i++){
+        dx = (x[i] - x[i-1]);
+        dy = (y[i] - y[i-1]);
+        lengthLine1 = round(lengthLine1 + sqrt(dx*dx + dy*dy));
+      }
+
+      if(settingDebug){
+        print('User drew 1st polyline of length (px) ' + lengthLine1);
+      }
+
+      if(lengthLine1 >= settingUsedPointsMin){
+
+        if(settingDebug){
+          print('The 1st polyline is sufficiently long');
+        }
+
+        run('Fit Spline');
+        roiManager('add', 'pink');
+        getSelectionCoordinates(x1, y1);
+        roiManager('select', 0);
+        roiManager('rename', 'line1');
+        roiManager('deselect');
+
+        // Order coords by increasing X (Y if X constant)
+
+        if(x1[0] > x1[x1.length - 1] || (x1[0] == x1[x1.length - 1] && y1[0] > y1[y1.length - 1])){
+          x1 = Array.reverse(x1);
+          y1 = Array.reverse(y1);
+          if(settingDebug){
+            print('Flipped 1st polyline directionality');
+          }
+        }
+
+        // Line 2 if line 1 seems OK
+
+        setTool('polyline');
+        waitForUser("NOW: in image window, draw second segmented line 2 to mark the other edge\n\n\THEN: hit OK");
+
+        if(selectionType() == 6){
+
+          getSelectionCoordinates(x, y);
+          lengthLine2 = 0;
+          for(i = 1; i < x.length; i++){
+            dx = (x[i] - x[i-1]);
+            dy = (y[i] - y[i-1]);
+            lengthLine2 = round(lengthLine2 + sqrt(dx*dx + dy*dy));
+          }
+
+          if(settingDebug){
+            print('User drew 2nd polyline of length (px) ' + lengthLine2);
+          }
+
+          if(lengthLine2 >= settingUsedPointsMin){
+
+            if(settingDebug){
+              print('The 2nd polyline is sufficiently long');
+            }
+
+            run('Fit Spline');
+            roiManager('add', 'cyan');
+            getSelectionCoordinates(x2, y2);
+            roiManager('select', 1);
+            roiManager('rename', 'line2');
+            roiManager('deselect');
+
+            // Order coords by increasing X (Y if X constant)
+
+            if(x2[0] > x2[x2.length - 1] || (x2[0] == x2[x2.length - 1] && y2[0] > y2[y2.length - 1])){
+              x2 = Array.reverse(x2);
+              y2 = Array.reverse(y2);
+              if(settingDebug){
+                print('Flipped 2nd polyline directionality');
+              }
+            }
+
+            // Identify short (testLine) and long (refLine) lines
+
+            if(lengthLine1 > lengthLine2){
+              refLineX = x1; refLineY = y1;
+              testLineX = x2; testLineY = y2;
+              if(settingDebug){
+                print('The 2nd polyline is shorter');
+              }
+            }else{
+              refLineX = x2; refLineY = y2;
+              testLineX = x1; testLineY = y1;
+              if(settingDebug){
+                print('The 1st polyline is shorter');
+              }
+            }
+
+            // To randomly select points on testLine, and collect the shortest distance measurements/coords
+
+            randomPointIds = myRandomize(Array.getSequence(testLineX.length));
+
+            // Ensure with angle measurements that the right distance measurement is collected
+
+            for(i = 0; i < randomPointIds.length; i++){
+
+              // Point being tested
+
+              t1x = testLineX[randomPointIds[i]];
+              t1y = testLineY[randomPointIds[i]];
+
+              // Point next to tested point
+
+              adjoiningPointId = randomPointIds[i] + 1;
+              if(adjoiningPointId > testLineX.length - 1){
+                adjoiningPointId = randomPointIds[i] - 1;
+              }
+              t2x = testLineX[adjoiningPointId];
+              t2y = testLineY[adjoiningPointId];
+
+              degs = newArray(0);
+              dists = newArray(0);
+              refLineX2 = newArray(0);
+              refLineY2 = newArray(0);
+
+              for(j = 0; j < refLineX.length; j++){
+
+                // Expecting an ~90 degree between the point on refline, and the test and adjoining points on testline
+
+                deg = myDegreeThreePoints(refLineX[j], t1x, t2x, refLineY[j], t1y, t2y);
+
+                // Collect shortest distance and coords of the test point and its nearest point on refline
+
+                if(!isNaN(deg) && abs(deg - 90) < 5){
+                  degs = myAppend(degs, deg);
+                  dist = sqrt(pow(t1x - refLineX[j], 2) + pow(t1y - refLineY[j], 2));
+                  dists = myAppend(dists, dist);
+                  refLineX2 = myAppend(refLineX2, refLineX[j]);
+                  refLineY2 = myAppend(refLineY2, refLineY[j]);
+                }
+
+              } // END for j = 0
+
+              if(dists.length > 0){
+                jMin = 0;
+                if(dists.length > 1){
+                  jMinAr = Array.findMinima(dists, 0);
+                  jMin = jMinAr[0];
+                }
+                useDist = dists[jMin];
+                useRefX = refLineX2[jMin];
+                useRefY = refLineY2[jMin];
+
+                // Reverse check to ensure that a wrong point on refLine was not selected
+
+                for(m = 0; m < testLineX.length; m++){
+                  if(sqrt(pow(testLineX[m] - useRefX, 2) + pow(testLineY[m] - useRefY, 2)) < useDist){
+                    useDist = 0;
+                    m = 1e99;
+                  }
+                }
+
+                if(useDist > 0){
+                  measures = myAppend(measures, useDist);
+                  distX1 = myAppend(distX1, t1x);
+                  distY1 = myAppend(distY1, t1y);
+                  distX2 = myAppend(distX2, useRefX);
+                  distY2 = myAppend(distY2, useRefY);
+                  if(settingDebug){
+                    print('testLine point (' + t1x + ',' + t1y + ') & refLine point (' + refLineX2[jMin] + ',' + refLineY2[jMin] + '): dist = ' + dists[jMin] + '; deg = ' + degs[jMin]);
+                  }
+                }
+              }
+
+              // Stop if enough measures are collected; by breaking the for loop
+
+              if(measures.length == settingUsedPointsMax){
+                i = 1e99;
+              }
+
+            } // END for i = 0
+
+            if(measures.length >= settingUsedPointsMin){
+              measureDone = 1;
+            }
+
+          }else{ // END if(lengthLine2 >= settingUsedPointsMin)
+            if(settingDebug){
+              print('The 2nd polyline is too short!');
+            }
+          }
+        } // END if(selectionType() == 6) // line 2
+
+      }else{ // END if(lengthLine1 >= settingUsedPointsMin)
+        if(settingDebug){
+          print('The 1st polyline is too short!');
+        }
+      }
+    } // END if(selectionType() == 6) // line 1
+
+  } // END while(measureDone == 0)
+
+  // Output: Plot shortest distances, and get and plot measurement stats
+
+  if(measureDone == 1){
+
+    if(settingDebug){
+      print('Finishing measurements... ' + measures.length + ' shortest distances were collected');
+    }
+
+    roiManager('deselect');
+    roiManager('draw');
+    selectWindow('ROI Manager');
+    run('Close');
+
+    setColor('yellow');
+    for(i = 0; i < measures.length; i++){
+      drawLine(distX1[i], distY1[i], distX2[i], distY2[i]);
+    }
+
+    Array.getStatistics(measures, min, max, mean, sd);
+    resultAvailable = 'Avg. ' + d2s(mean, 1) + ', SD ' + d2s(sd, 1) + ", Range " + d2s(min, 1) + '-' + d2s(max, 1);
+
+    textPx = 10;
+    imgWidth = getWidth();
+    if(imgWidth > 200){
+      textPx = round(imgWidth/20);
+    }
+
+    setFont('SansSerif', textPx, 'antialiased');
+    drawString(resultAvailable, textPx, 1.5 * textPx);
+
+    // For saving, with current time
+
+    getDateAndTime(year, month, dayOfWeek, dayOfMonth, hour, minute, second, msec);
+
+    outTxt = imgFile + ',' + imgDir + ',' + year + '-' + IJ.pad(month,2) + '-' + IJ.pad(dayOfMonth,2) + '-' + IJ.pad(hour,2) + ':' + IJ.pad(minute,2) + ':' + IJ.pad(second,2) + ',' + lengthLine1 + ',' + lengthLine2 + ',' + measures.length + ',' + d2s(mean, 1) + ',' + d2s(sd, 1) + ',' +  d2s(min, 1) + ',' + d2s(max, 1);
+
+    if(settingDebug){
+      print('String to be written to output file: ' + outTxt);
+    }
+  }
+
+  roiManager('reset');
+  selectWindow('ROI Manager');
+  run('Close');
+
+} // END while(measuringImage == 1)
+
+if(settingDebug){
+  print("<<<< Ending InteredgeDistance macro\n"); 
+}NSRL 18B_24h Gamma F2_Claudin 3 TxRed 20x_01.tif,C:\Users\jhdiaz\Desktop\Claudin-3,2022-04-13-14:44:42,2058,1790,30,78.4,9.3,58.3,89.8
+NSRL 18B_24h Iron F2_Claudin 3 TxRed 20x_01.tif,C:\Users\jhdiaz\Desktop\Claudin-3,2022-04-13-14:47:47,1909,1757,30,56.6,8.1,41.8,75.4
+NSRL18B_Gamma_24Hrs_1_1.tif,D:\Jonathan\Claudin3,2022-07-16-11:26:02,1502,1669,30,86.8,15.3,46.0,108.7
