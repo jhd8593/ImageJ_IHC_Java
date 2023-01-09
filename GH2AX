@@ -1,0 +1,114 @@
+//choose directory, make sure to use / instead of \ 
+dir="C:/Users/jhdiaz/Desktop/Lab stuff/GI Data/Gamma-H2AX/Gamma-H2AX Results";
+GFPResults="C:/Users/jhdiaz/Desktop/Lab stuff/GI Data/Gamma-H2AX/GFP Results";
+
+print("searching "+dir);
+
+//get all files in directory
+//make sure all files in this directory are images
+imageList = getFileList(dir);
+
+
+print("Files: ");
+for (i = 0; i < imageList.length; i++) {
+	print(imageList[i]);
+}
+
+//loop through every file name
+for(i=0;i<imageList.length;i++){
+	print("Processing: "+imageList[i]);
+	//see if the file is an image
+	if(isImage(imageList[i])){
+		//if it is an image, open it
+		open(dir+"/"+imageList[i]);
+		//and then processes it
+		makeRectangle(0, 4, 2046, 1998);
+		run("Crop");
+		lesgo();
+		close("*");
+	}
+}
+
+//close results after processing
+close("Results");
+
+
+
+function lesgo(){
+	run("Split Channels");
+
+	  list = getList("image.titles");
+	  if (list.length==0)
+	     print("No image windows are open");
+	  else {
+	     print("Image windows:");
+	     for (i=0; i<list.length; i++){
+	     	imageName=list[i];
+	        print("Processing: "+imageName);
+	        if(matches(imageName, ".*red*")){
+	        	selectImage(imageName);
+	        	close();
+	        }else if(matches(imageName, ".*green.*")){
+	        	green();
+	        }else if(matches(imageName, ".*blue.*")){
+	        	blue();		
+	        }
+	     }
+	  }
+	 print("");
+	 close("*");
+
+}
+
+function blue(){
+	print(imageName+" matches regex");
+				run("Clear Results");
+	        	selectImage(imageName);
+	        	print(getImageID());
+				run("Subtract Background...", "rolling=100");
+				run("Sharpen");	
+				run("Enhance Contrast...", "saturated=0.35");
+				run("Auto Threshold", "method=Otsu ignore_black white");
+				run("Watershed");
+				id=getImageID();
+				run("Analyze Particles...", "size=160-7000 pixel circularity=0.30-1.00 show=Outlines display summarize");
+				close(id);
+				selectWindow("Summary");
+				saveAs("Results",dir+"/"+imageName +" Results.csv");
+				close("Summary");
+				close(dir+"/"+imageName +" Results.csv");
+}
+
+function green(){
+	print(imageName+" matches regex");
+	        	selectImage(imageName);	        	
+				run("Find Edges");
+				run("Subtract Background...", "rolling=40");
+				setAutoThreshold("MaxEntropy dark");
+				run("Threshold...");
+				setThreshold(75, 255);
+				setOption("BlackBackground", true);
+				run("Convert to Mask");
+				close("Threshold");
+				id=getImageID();
+				run("Analyze Particles...", "size=5.2-20 pixel circularity=0.35-1.00 show=Outlines display summarize overlay");
+				saveAs("png", GFPResults +"/"+imageName + "GFP Results.png");
+				close(id);
+				selectWindow("Summary");
+				saveAs("Results",dir+"/"+imageName +" Summary.csv");
+				close("Summary");
+				close(dir+"/"+imageName +" Summary.csv");
+}
+close("Summary.csv");
+function isImage(string){
+	if(matches(string, ".*.(jpg|tif|png|tiff)")){
+		return true;
+	}else{
+		return false;
+	}
+}
+
+close("Threshold");
+close("Log");
+close("Summary");
+close("*");
