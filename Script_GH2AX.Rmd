@@ -1,0 +1,414 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+```{r packages}
+#Pacman package loader and useful packages 
+if (!require("pacman")) install.packages("pacman"); library(pacman) #helps to load packages more efficiently 
+p_unload('all')
+pacman::p_load(BiocManager, ggh4x, DT, openxlsx, readxl, rstatix, ggpubr, janitor,ggstatsplot, tidyverse, nortest,broom,svglite,dlookr,ggpattern,plotrix)
+
+```
+
+
+```{r list}
+folder<-"C:/Users/jhdiaz/Desktop/Lab stuff/GI Data/Gamma-H2AX/Gamma-H2AX Results"
+
+
+allcsvs <-list.files(path = folder,pattern = "*.csv",full.names = TRUE,recursive = FALSE)
+allcsvs<-sort(allcsvs)
+#allcsvs
+
+
+```
+
+
+```{r}
+dat<-data.frame(
+  path="",
+  count=0,
+  label=""
+)
+for(i in seq(1,length(allcsvs))){
+  single<-read.csv(allcsvs[i])
+  name<-allcsvs[i]
+  value<-grep(x = name,pattern = ".*Summary")
+  if(length(value)>0){
+     count<-single[1,2]
+     label<-single[1,1]
+  }else{
+    count<-single[1,2]
+    label<-single[1,1]
+  }
+  single$path<-name
+  
+  tempTable<-data.frame(
+    path=name,
+    count=count,
+    label=label
+    
+  )
+  
+  dat<-rbind(dat,tempTable)
+  
+  
+}
+
+dat<-dat[-1,]
+#write.xlsx(dat,"Image Analysis combined.xlsx")
+
+
+```
+
+```{r}
+#finds images labeled "cnlp" and makes a column for treatment that's either no treatment or cnlp
+dat<-dat%>%mutate(
+  Treatment=case_when(
+    grepl("cnlp",label)~"cNLP",
+    TRUE~"No Treatment"
+  )
+)
+dat$Treatment<-factor(dat$Treatment,levels = c("No Treatment","cNLP"))
+
+#remove cnlp labels from path to make subsequent splitting easier
+dat$label<-str_replace(dat$label,"_cnlp","")
+```
+
+```{r}
+
+dat<-dat%>%mutate(
+  Group=case_when(
+    grepl(pattern="blue",x=path)~"Nucleus",
+    grepl(pattern="green",x=path)~"Foci"
+  )
+)
+dat<-dat%>%separate(col = "label",into = c("Label", "Extra"), sep = "[(]")
+dat<-dat[-c(1,4)]
+```
+
+```{r}
+dat<-pivot_wider(dat,names_from = "Group",values_from = "count")
+```
+
+```{r}
+
+dat<-dat%>%mutate(
+  "G-H2AX foci number per cell"=Foci/Nucleus
+)
+
+#write.xlsx(dat,"Image Basic Data.xlsx")
+
+```
+
+```{r}
+#separate label by "_" and name the columms
+dat<-dat%>%separate(col = "Label",into = c("Time","Ion","Mouse","ROI"), sep = "[_]")
+names(dat)<-c("Time","Ion","Mouse","ROI","Treatment","Nucleus","Foci","G-H2AX foci number per cell")
+dat<-dat%>%select(c(1,2,5,3:8)) #changes the order and select columns
+
+#Some groups had capital H for hour instead of lowercase
+dat$Time<-str_replace(dat$Time,"H","h")
+dat$Time<-factor(dat$Time,levels=c("15min","90min","4hr","24hr"))
+
+dat$Ion<-str_replace(dat$Ion,"H","Proton")
+dat$Ion<-str_replace(dat$Ion,"Fe","Iron")
+```
+
+```{r}
+dat_summary<-dat%>%group_by(Time,Ion,Treatment)%>%
+  summarise(
+    Foci_per_cell_Mean = mean(`G-H2AX foci number per cell`),
+    Foci_per_cell_SEM = std.error(`G-H2AX foci number per cell`)
+    )
+
+write.xlsx(dat_summary,"Image Mouse Summary.xlsx")
+
+time_summary<-dat%>%group_by(Time,Ion,Treatment)%>%
+  summarise(
+    Mean=mean(`G-H2AX foci number per cell`),
+    SEM = std.error(`G-H2AX foci number per cell`))
+
+```
+
+
+```{r}
+#ALWAYS REMEMBER TO CONVERT TO TIBBLE 
+dat_summary<-as_tibble(dat_summary)
+
+ttestsummary_no_treatment<-dat_summary%>%
+  filter(Treatment=="No Treatment")%>%
+  t_test(Foci_per_cell_Mean~Time)%>%
+  add_xy_position()
+```
+
+
+
+
+```{r}
+#No Treatment
+grouped_ggbetweenstats(dat%>%filter(Treatment=="No Treatment"),x="Time",y="G-H2AX foci number per cell",outlier.tagging = TRUE,grouping.var = "Ion")
+
+ggsave("Stats Plot No Treatment.svg",dpi=300,width=20,height=10)
+```
+
+
+
+```{r Remove Outliers}
+dat<-dat%>%group_by(Time,Ion,Treatment)%>%
+  mutate(
+  IQR=IQR(`G-H2AX foci number per cell`),
+  lowerQ=quantile(`G-H2AX foci number per cell`, probs=c(.25, .75), na.rm = FALSE)[1] - 1.5 * IQR,
+  upperQ=quantile(`G-H2AX foci number per cell`, probs=c(.25, .75), na.rm = FALSE)[2] + 1.5 * IQR
+)
+
+dat_no_outliers<-dat#%>%filter(
+#  `G-H2AX foci number per cell`>lowerQ & `G-H2AX foci number per cell`<upperQ
+#)
+
+#summarise
+dat_summary_no<-dat_no_outliers%>%
+  group_by(Time,Ion,Treatment,Mouse)%>%
+  summarise(
+    Foci_per_cell_Mean=mean(`G-H2AX foci number per cell`),
+    Foci_per_cell_SEM=std.error(`G-H2AX foci number per cell`)
+    )
+
+#convert to tibble!!!
+dat_summary_no<-as_tibble(dat_summary_no)
+```
+
+
+```{r No Treatment, no sham ttest}
+#ttest
+ttest_summary_no<-dat_summary_no%>%
+  filter(Treatment=="No Treatment",
+         Ion!="Sham")%>%
+  group_by(Ion)%>%
+  t_test(Foci_per_cell_Mean~Time,p.adjust.method = "holm")%>%
+  add_xy_position()
+
+    
+```
+
+
+```{r Plot - No Treatments - Time by Foci per cell}
+#prevent scientific notation in graph
+options(scipen = 10000,digits=5)
+
+plot<-function(df,t_test_table,fill_color){
+  ggline(df,x="Time",y="Foci_per_cell_Mean",fill= fill_color,color="black",add=c("mean_se","jitter"))+
+  stat_compare_means(method="anova",label.y.npc = .6,label="p.format")+
+  stat_pvalue_manual(t_test_table,hide.ns = TRUE)+
+  scale_y_continuous(breaks = c(0,1,2),limits = c(0,2),expand=c(0,0))+
+  ylab("γ-H2AX foci number per cell")+
+  xlab("Euthanasia Time")+
+  theme(
+    legend.position = "",
+    axis.title.x = element_text(size=14, face="bold", colour = "black"),
+    axis.title.y = element_text(size=16, face="bold", colour = "black"),    
+    axis.text.x = element_text(size=12, face="bold", colour = "black"), 
+    axis.text.y = element_text(size=12, face="bold", colour = "black"),
+  )
+
+  name=paste0("No Outliers Plot ",df$Ion[1],".svg")
+  ggsave(filename = name,dpi = 500,width=5,height=5)
+  browseURL(name)
+}
+
+#Iron
+temp<-dat_summary_no%>%
+  filter(Ion=="Iron",Treatment=="No Treatment")
+
+ttest<-temp%>%
+  t_test(Foci_per_cell_Mean~Time)%>%
+  add_xy_position()
+
+plot(temp,ttest,"#333333")
+
+
+#Proton
+temp<-dat_summary_no%>%
+  filter(Ion=="Proton",Treatment=="No Treatment")
+
+ttest<-temp%>%
+  t_test(Foci_per_cell_Mean~Time)%>%
+  add_xy_position()
+
+plot(temp,ttest,"#818181")
+
+
+#Gamma
+temp<-dat_summary_no%>%
+  filter(Ion=="Gamma",Treatment=="No Treatment")
+
+ttest<-temp%>%
+  t_test(Foci_per_cell_Mean~Time)%>%
+  add_xy_position()
+
+plot(temp,ttest,"#ababab")
+```
+
+```{r Plot - No Treatments - Ion by Foci per cell for each Time}
+#change y position of first sig bar by this amount
+ymin=.1
+
+
+timeplot<-function(tabley,ttesttable){
+  ggbarplot(tabley,x="Ion",y="Foci_per_cell_Mean",color="black",fill= "Ion",add=c("mean_se","jitter"),error.plot = "upper_errorbar", order = c("Sham","Gamma","Proton","Iron"))+
+  stat_compare_means(method="anova",label.y.npc = .9,label="p.format")+
+  scale_fill_manual(values =  c("#ababab","#818181","#333333","black")) +
+  stat_pvalue_manual(ttesttable,hide.ns = TRUE,step.increase = .15)+
+  scale_y_continuous(breaks = c(0,1,2),limits = c(0,2),expand=c(0,0))+
+  ylab("γ-H2AX foci number per cell")+
+  xlab("")+
+  theme(
+    legend.position = "",
+    axis.title.x = element_text(size=14, face="bold", colour = "black"),    
+    axis.title.y = element_text(size=16, face="bold", colour = "black"),    
+    axis.text.x = element_text(size=12, face="bold", colour = "black"), 
+    axis.text.y = element_text(size=12, face="bold", colour = "black"),
+  )
+
+  name=paste0("No Outliers - No Treatment - Ion by Foci per cell - ",temp$Time[1],".svg")
+  ggsave(filename = name,dpi = 500,width=4,height=5)
+  browseURL(name)
+}
+
+#No Treatment
+#15min
+temp<-dat_summary_no%>%
+  filter(Treatment=="No Treatment",Time=="15min")
+
+ttest<-temp%>%
+  t_test(Foci_per_cell_Mean~Ion)%>%
+  add_xy_position()%>%
+  mutate(
+    y.position=y.position+ymin
+  )
+
+timeplot(temp,ttest)
+
+#90min
+temp<-dat_summary_no%>%
+  filter(Treatment=="No Treatment",Time=="90min")
+
+ttest<-temp%>%
+  t_test(Foci_per_cell_Mean~Ion)%>%
+  add_xy_position()%>%
+  mutate(
+    y.position=y.position+ymin
+  )
+
+timeplot(temp,ttest)
+
+#4hr
+temp<-dat_summary_no%>%
+  filter(Treatment=="No Treatment",Time=="4hr")
+
+ttest<-temp%>%
+  t_test(Foci_per_cell_Mean~Ion)%>%
+  add_xy_position()%>%
+  mutate(
+    y.position=y.position+ymin
+  )
+
+timeplot(temp,ttest)
+
+
+
+temp<-dat_summary_no%>%
+  filter(Treatment=="No Treatment",Time=="24hr")
+
+ttest<-temp%>%
+  t_test(Foci_per_cell_Mean~Ion)%>%
+  add_xy_position()%>%
+  mutate(
+    y.position=y.position+ymin
+  )
+
+timeplot(temp,ttest)
+
+```
+
+```{r}
+
+temp1<-dat_summary_no%>%
+    filter(Time!="90min")%>%
+  mutate(
+    Group=paste(Time,Ion,Treatment)
+  )
+
+temp<-dat_summary_no%>%
+  filter(Time!="90min")%>%
+  group_by(Time,Ion,Treatment)%>%
+  summarise(
+    SEM=std.error(Foci_per_cell_Mean),
+    Mean=mean(Foci_per_cell_Mean),
+    Count=n()
+  )%>%
+  mutate(
+    Group=paste(Ion,Treatment)
+  )
+
+temp<-temp%>%mutate(
+  Group=paste(Time,Ion,Treatment)
+)
+
+#Stat analysis
+
+tempS<-temp1%>%group_by(Time,Treatment,Ion)%>%summarise(
+  Count=n()
+)
+
+levels(temp1$Time)
+
+ttest<-temp1%>%
+group_by(Time,Ion)%>%
+t_test(Foci_per_cell_Mean~Treatment,p.adjust.method = "holm")%>%
+add_xy_position(x = "Time",group = "Ion")
+
+ttest<-ttest%>%filter(p<.05)
+
+
+
+temp$Ion<-factor(temp$Ion,levels=c("Sham","Gamma","Proton","Iron"))
+
+temp<-as.tibble(temp)
+
+ggplot(temp,aes(Time,Mean,fill = Ion,pattern=Treatment))+
+  geom_col_pattern(pattern_density=.1,pattern_spacing=.05,position = position_dodge(),color="black")+
+    scale_pattern_manual(values = c(cNLP = "stripe", "No Treatment" = "none"))+
+  scale_y_continuous(expand = c(0,0),limits = c(0,1),breaks = c(0,1))+
+  geom_errorbar(aes(fill=Ion,pattern=Treatment,ymin=Mean,ymax=Mean+SEM),position = position_dodge(.9),width=.1)+
+  color_palette(palette = c("black","black"))+
+  xlab("Euthanasia Time")+
+  ylab("G-H2AX foci number per cell")+
+  theme_pubclean()+
+  theme(
+      legend.position = "right",
+      legend.key.size = unit(x = 1,units = "cm"),
+      panel.grid.major.y  = element_blank(),
+      panel.grid.minor.y = element_blank(),
+      panel.grid.major.x=element_blank(),
+      axis.line = element_line(),
+      axis.title.x = element_text(size=14, face="bold", colour = "black"),
+      axis.title.y = element_text(size=18, face="bold", colour = "black"),
+      axis.text.x = element_text(size=12, face="bold", colour = "black"),
+      axis.text.y = element_text(size=12, face="bold", colour = "black")
+  )+
+  fill_palette(palette = c("#cccccc","#ababab","#818181","#333333"))+
+  geom_signif(annotations = "*",y_position = .2,xmin = 1.95,xmax=2.05,tip_length = .01)+
+  guides(pattern = guide_legend(override.aes = list(fill = "white")),
+  fill = guide_legend(override.aes = list(pattern = "none")))
+
+
+
+         
+ggsave("GH2AX(cnlp).svg",width=7,height=5)
+browseURL("GH2AX(cnlp).svg")
+
+
+
+
+```
