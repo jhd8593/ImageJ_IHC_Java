@@ -1,0 +1,111 @@
+// Display Window Titles
+//
+// Displays the titles of image and non-image windows.
+
+
+//choose directory, make sure to use / instead of \ 
+dir="C:/Users/jhdiaz/Desktop/Lab stuff/GI Data/TUNEL/TUNEL DATA";
+DABResults="C:/Users/jhdiaz/Desktop/Lab stuff/GI Data/TUNEL/DAB Results"
+
+print("searching "+dir);
+
+//get all files in directory
+//make sure all files in this directory are images
+imageList = getFileList(dir);
+
+print("Files: ");
+for (i = 0; i < imageList.length; i++) {
+	print(imageList[i]);
+}
+
+//loop through every file name
+for(i=0;i<imageList.length;i++){
+	print("Processing: "+imageList[i]);
+	//see if the file is an image
+	if(isImage(imageList[i])){
+		//if it is an image, open it
+		open(dir+"/"+imageList[i]);
+		//and then processes it
+		lesgo();
+		close("*");
+	}
+}
+
+//close results after processing
+close("Results");
+
+function lesgo(){
+	run("Colour Deconvolution", "vectors=[Methyl Green DAB]");
+	
+	  list = getList("image.titles");
+	  if (list.length==0)
+	     print("No image windows are open");
+	  else {
+	     print("Image windows:");
+	     for (i=0; i<list.length; i++){
+	     	imageName=list[i];
+	        print("Processing: "+imageName);
+	        if(matches(imageName, ".*Colour_3.*")){
+	        	selectImage(imageName);
+	        	close();
+	        }else if(matches(imageName, ".*Colour_2.*")){
+	        	color2();
+	        }else if(matches(imageName, ".*Colour_1.*")){
+	        	color1();		
+	        }
+	     }
+	  }
+	 print("");
+	 close("*");
+
+}
+
+function color1(){
+	print(imageName+" matches regex");
+				run("Clear Results");
+	        	selectImage(imageName);
+	        	print(getImageID());
+	        	//Threshold
+				run("Threshold...");
+				setThreshold(233, 255);
+				setOption("BlackBackground", true);
+				run("Convert to Mask");
+				run("Measure");
+				selectWindow("Results");
+				saveAs("Results",dir+"/"+imageName +" Results.csv");
+				run("Clear Results");
+				
+}
+
+function color2(){
+	print(imageName+" matches regex");
+	        	selectImage(imageName);
+				run("Subtract Background...", "rolling=10 light");	        	
+	       		//Threshold
+	        	run("Threshold...");
+				setThreshold(12, 164);
+				setOption("BlackBackground", true);
+				run("Convert to Mask");
+				id=getImageID();
+				run("Analyze Particles...", "size=20-50 circularity=0.68-1.00 show=Masks display summarize");
+				saveAs("png", DABResults +"/"+imageName + "DAB Results.png");
+				close(id);
+				run("Measure");	
+				selectWindow("Summary");
+				saveAs("Results",dir+"/"+imageName +" Summary.csv");
+				close("Summary");
+				
+}
+
+function isImage(string){
+	if(matches(string, ".*.(jpg|tif|png|tiff)")){
+		return true;
+	}else{
+		return false;
+	}
+}
+
+close("summary")
+close("Threshold")
+close("Results")
+close("log")
