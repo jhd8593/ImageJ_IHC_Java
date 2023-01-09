@@ -1,0 +1,107 @@
+---
+title: "PCNA MSI"
+output: html_document
+date: "2022-10-18"
+---
+
+```{r packages}
+#Pacman package loader and useful packages 
+if (!require("pacman")) install.packages("pacman"); library(pacman) #helps to load packages more efficiently 
+p_unload('all')
+pacman::p_load(BiocManager, ggh4x, DT, openxlsx, readxl, rstatix, ggpubr, janitor,ggstatsplot, tidyverse, nortest,broom,svglite,dlookr,ggpattern,plotrix,gg.gap)
+
+```
+
+
+```{r Excel Msi}
+library(readxl)
+Msi <- read_excel("C:/Users/jhdiaz/Desktop/Lab stuff/GI Data/PCNA Msi/Msi.xlsx")
+```
+
+```{r Organize}
+Msi_1<-Msi %>%
+  group_by(Ion) %>%
+  summarise(
+    SEM=std.error(Cells),
+    Mean=mean(Cells)
+  )
+
+Msi_1<-as_tibble(Msi_1)
+```
+
+```{r Ttest}
+MsiTtest<-Msi%>%
+  t_test(Cells~Ion,var.equal = TRUE)%>%
+  add_xy_position()
+```
+
+```{r Plot}
+ggbarplot(Msi,"Ion","Cells",add="mean_se",fill="Ion",error.plot = "upper_errorbar",alpha=.8)+
+  scale_y_continuous(expand = c(0,0), breaks = c(0,2,4,6),limits = c(0,6))+
+  stat_compare_means(label.y.npc = .9,method = "anova",aes(label = paste0("p = ", ..p.format..)))+
+  stat_pvalue_manual(MsiTtest,hide.ns = TRUE)+
+  theme(legend.position = "")+
+  fill_palette(palette = c("#f8f8f8","#ababab","#818181","black"))+
+  xlab("")+
+  ylab(expression(paste("  Number of Stem Cells\n(Relativve to Crypt Base)")))+
+  font("ylab",face="bold")+
+  font("xy.text",color = "black", face = "bold")+
+theme(
+  axis.title.x = element_text(size=14, face="bold", colour = "black"),    
+  axis.title.y = element_text(size=12, face="bold", colour = "black",margin = margin(l=10)),    
+  axis.text.x = element_text(size=12, face="bold", colour = "black"), 
+  axis.text.y = element_text(size=12, face="bold", colour = "black"),
+)
+
+
+ggsave("Msi Results.svg",width=4,height=5)
+browseURL("Msi Results.svg")
+
+```
+
+```{r Excel PCNA}
+library(readxl)
+PCNA <- read_excel("C:/Users/jhdiaz/Desktop/Lab stuff/GI Data/PCNA Msi/PCNA.xlsx")
+View(PCNA)
+```
+
+```{r Organize}
+PCNA_1<-PCNA %>%
+  group_by(Ion) %>%
+  summarise(
+    SEM=std.error(Cells),
+    Mean=mean(Cells)
+  )
+
+PCNA_1<-as_tibble(PCNA_1)
+```
+
+```{r Ttest}
+PCNATtest<-PCNA%>%
+  t_test(Cells~Ion,var.equal = TRUE)%>%
+  add_xy_position()
+```
+
+```{r Plot}
+ggbarplot(PCNA,"Ion","Cells",add="mean_se",fill="Ion",error.plot = "upper_errorbar",alpha=.8)+
+  scale_y_continuous(expand = c(0,0), breaks = c(0,2,4,6,8),limits = c(0,8))+
+  stat_compare_means(label.y.npc = .9,method = "anova",aes(label = paste0("p = ", ..p.format..)))+
+  stat_pvalue_manual(PCNATtest,hide.ns = TRUE)+
+  theme(legend.position = "")+
+  fill_palette(palette = c("#f8f8f8","#ababab","#818181","black"))+
+  xlab("")+
+  ylab(expression(paste("Number of PCNA+ \n      (per villus)")))+
+  font("ylab",face="bold")+
+  font("xy.text",color = "black", face = "bold")+
+theme(
+  axis.title.x = element_text(size=14, face="bold", colour = "black"),    
+  axis.title.y = element_text(size=12, face="bold", colour = "black",margin = margin(l=10)),   
+  axis.text.x = element_text(size=12, face="bold", colour = "black"), 
+  axis.text.y = element_text(size=12, face="bold", colour = "black"),
+)
+
+
+ggsave("PCNA Results.svg",width=4,height=5)
+browseURL("PCNA Results.svg")
+
+```
