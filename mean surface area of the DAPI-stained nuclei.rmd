@@ -1,0 +1,30 @@
+```{r}
+if (!require("pacman")) install.packages("pacman"); library(pacman) #helps to load packages more efficiently
+p_unload('all')
+pacman::p_load(BiocManager, ggh4x, DT, openxlsx, readxl, rstatix, ggpubr, janitor,ggstatsplot, tidyverse, nortest,broom,svglite,dlookr,ggpattern,plotrix)
+
+```
+
+```{r}
+folder<-"C:/Users/jhd85/OneDrive/Desktop/Lab Stuff/GI_Data_1/Gamma-H2AX/Gamma-H2AX Results"
+allcsvs <-list.files(path = folder,pattern = "*.csv",full.names = TRUE,recursive = FALSE)
+allcsvs<-sort(allcsvs)
+
+dat<-tibble(
+path=allcsvs,
+data=lapply(path,read.csv)
+
+) %>% unnest()
+
+
+```
+
+```{r}
+
+datS<-dat  %>%
+        summarise(
+            Average.Size=mean(Average.Size),
+            Major=mean(Major),
+            Minor=mean(Minor),
+        )
+```
