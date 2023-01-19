@@ -1,0 +1,96 @@
+//choose directory, make sure to use / instead of \ 
+dir="C:/Users/jhdiaz/Desktop/Lab stuff/GI Data_1/Gamma-H2AX/Gamma-H2AX Results";
+DAPIResults="C:/Users/jhdiaz/Desktop/Lab stuff/GI Data_1/Gamma-H2AX/DAPI Results";
+
+print("searching "+dir);
+
+//get all files in directory
+//make sure all files in this directory are images
+imageList = getFileList(dir);
+
+
+print("Files: ");
+for (i = 0; i < imageList.length; i++) {
+	print(imageList[i]);
+}
+
+//loop through every file name
+for(i=0;i<imageList.length;i++){
+	print("Processing: "+imageList[i]);
+	//see if the file is an image
+	if(isImage(imageList[i])){
+		//if it is an image, open it
+		open(dir+"/"+imageList[i]);
+		//and then processes it
+		makeRectangle(0, 4, 2046, 1998);
+		run("Crop");
+		lesgo();
+		close("*");
+	}
+}
+
+//close results after processing
+close("Results");
+
+
+
+function lesgo(){
+	run("Set Scale...", "distance=123.0041 known=20 unit=um");
+	run("Split Channels");
+
+	  list = getList("image.titles");
+	  if (list.length==0)
+	     print("No image windows are open");
+	  else {
+	     print("Image windows:");
+	     for (i=0; i<list.length; i++){
+	     	imageName=list[i];
+	        print("Processing: "+imageName);
+	        if(matches(imageName, ".*red*")){
+	        	selectImage(imageName);
+	        	close();
+	        }else if(matches(imageName, ".*green.*")){
+	        	selectImage(imageName);
+	        	close();
+	        }else if(matches(imageName, ".*blue.*")){
+	        	blue();		
+	        }
+	     }
+	  }
+	 print("");
+	 close("*");
+
+}
+
+function blue(){
+	print(imageName+" matches regex");
+				run("Clear Results");
+	        	selectImage(imageName);
+	        	print(getImageID());
+				run("Auto Threshold", "method=Default ignore_black white");
+				run("Watershed");
+				run("Set Measurements...", "area fit limit redirect=None decimal=3");
+				run("Analyze Particles...", "  show=Overlay display summarize");
+				id=getImageID();
+				run("Measure");
+				saveAs("png", DAPIResults +"/"+imageName + "DAPI Results.png");
+				close(id);
+				selectWindow("Summary");
+				saveAs("Results",dir+"/"+imageName +" Results.csv");
+				close("Summary");
+				close(dir+"/"+imageName +" Results.csv");
+}
+
+close("Summary.csv");
+function isImage(string){
+	if(matches(string, ".*.(jpg|tif|png|tiff)")){
+		return true;
+	}else{
+		return false;
+	}
+}
+
+close("Threshold");
+close("Log");
+close("Summary");
+close("*");
